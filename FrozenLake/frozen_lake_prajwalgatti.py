@@ -30,7 +30,7 @@ gamma = 0.95 				# Discounting rate
 epsilon = 1.0 				# Exploration rate
 max_epsilon = 1.0 			# Exploration probability at start
 min_epsilon = 0.01			# Min exploration probability
-decay_rate = 0.01			# Exponential decay rate for exploration probability
+decay_rate = 1e-2			# Exponential decay rate for exploration probability
 
 # --Q-LEARNING ALGORITHM--
 rewards = [] # List of rewards

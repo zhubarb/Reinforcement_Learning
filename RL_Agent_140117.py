@@ -774,7 +774,7 @@ class PG_Learner_softmax(Agent):
         # roll back final -1 reward back for N ticks
         rollback_lim = max(0, r.size-N )
         running_add= -1
-        for t in reversed(xrange(0, r.size)):
+        for t in reversed(range(0, r.size)):
             if t >= rollback_lim:
                 running_add = running_add * self.gamma 
                 discounted_r[t] = running_add

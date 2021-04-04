@@ -6,11 +6,11 @@ import numpy as np
 import gym
 import pandas as pd
 import seaborn as sns
-from itertools import product # cartesian product
+import copy
 from tqdm import tqdm
 
 
-def choose_action(vtable, trans, env, state, epsilon):
+def choose_action(v, s, env, state, epsilon):
     '''
 
     :param vtable: (np.array)
@@ -26,38 +26,91 @@ def choose_action(vtable, trans, env, state, epsilon):
         action = env.action_space.sample()
 
     else: # choose action index with the max q value
-        action = np.argmax(vtable[state, :])
+        next_state_values= s[state]@v # P(s'|s,a) * V(s')
+        action = np.argmax(next_state_values) # argmax_a(V(s'))
 
     return action
 
 
-def update_q_table(q, gamma, learning_rate):
-    '''
-        Implementation of the temporal difference learning update:
-    Q(s,a) <-- Q(s,a) + alpha * [target - prediction].
-    where:
-    prediction = Q(s,a),
-    and
-    target = r + gamma * max_a'[Q(s',a')] for Q-learning,
-    or
-    target = r + gamma * [ (1-epsilon)* max_a'[Q(s',a')] +
-                           epsilon* mean[Q(s',a')] for SARSA.
+def update_v_table_v1(v, s, exp, gamma, learning_rate):
 
-    The definition of the target changes depending on whether the learning is done
-    off-policy (Q-Learning) or on-policy (SARSA).
-    Off-policy (Q-Learning) computes the difference between Q(s,a) and the maximum
-    action value, while on-policy (SARSA) computes the difference between Q(s,a)
-    and the weighted sum of the average action value and the maximum.
+    state, action, next_state, reward, done = exp
 
-    :param q: (np.array)
-    :return: (dict) updated q (table)
-    '''
+    prediction = v[state]
+    target = s[state,action,next_state] * (reward + gamma * v[next_state]) # P(s'|s,a)*(reward + disc_factor* V(s')
+    v[state] = prediction + learning_rate * (target - prediction)
+    if done: # try this
+        v[next_state]=reward
 
-    prediction = q[state, action]
-    target = reward + gamma * np.max(q[next_state, :])
-    q[state, action] = prediction + learning_rate * (target - prediction)
+    return v
 
-    return q
+
+def update_v_table_v2(v, s, exp, gamma, learning_rate):
+
+    state, action, next_state, reward, done = exp
+
+    v_temp = copy.deepcopy(v)
+    v_temp[next_state] = reward + gamma * v[next_state]
+
+    prediction = v[state]
+    target = np.max(s[state]@v_temp)
+    v[state] = prediction + learning_rate * (target - prediction)
+
+    return v
+
+
+def update_v_table(v, s, exp, gamma, learning_rate):
+
+    state, action, next_state, reward, done = exp
+
+    prediction = v[state]
+
+    target = np.max(reward + gamma*(s[state]@v))
+
+    v[state] = prediction + learning_rate * (target - prediction)
+
+    if done:
+        v[next_state]=reward
+
+    return v
+
+
+def get_actual_trans_matrix(env):
+    s = np.zeros((env.observation_space.n, env.action_space.n, env.observation_space.n))
+    for state in range(s.shape[0]):  # loop through state: s
+        for action in range(s.shape[1]):  # loop through actions: a
+            transitions_to_next_state = [(t[1], t[0]) for t in env.env.P[state][action]]
+            for t in transitions_to_next_state:
+                s[state, action, t[0]] += t[1]
+    return s
+
+
+def learn_trans_matrix(env, n_trans_matrix):
+
+        # initialise state, action, next_state transition matrix: P(s'|s,a)
+        s = np.zeros((env.observation_space.n, env.action_space.n,  env.observation_space.n))
+
+        # play for n_trans_matrix_episodes to observe P(s'|s,a) frequencies
+        i_episode = 0
+        state = env.reset()
+        while i_episode <= n_trans_matrix:
+            action = env.action_space.sample()
+            next_state, reward, done, info = env.step(action)
+            s[state, action, next_state] += 1
+            state = next_state
+            if done:
+                state = env.reset()
+                i_episode += 1
+        env.close()
+
+        # Normalise P(s'|s,a) frequenciesto get probabilities
+        for state in range(s.shape[0]): # loop through state: s
+            for action in range(s.shape[1]): # loop through actions: a
+                s[state, action, :] = s[state, action, :] / s[state, action, :].sum()
+
+        print('Transition matrix s learned.')
+        return s
+
 
 def visualise_q_table(q_table):
     '''
@@ -77,42 +130,37 @@ if __name__ == '__main__':
     print(env.observation_space)  # print state space for cartpole
 
     v= np.zeros(env.observation_space.n) # state value table
-    s = np.zeros((env.observation_space.n,env.action_space.n,
-                 env.observation_space.n)) # state transition matrix P(s'|s,a)
+    #v[:5]=np.array([1,2,3,4,5])
+
     epsilon= 1
     min_epsilon=0.01
     max_epsilon=1
-    gamma = 0.99 # for this task the closer this is to 1, the more reliable is the avg reward
+    gamma = 0.95 # for this task the closer this is to 1, the more reliable is the avg reward
     learning_rate = 0.8 # if this is >=1, the training overshoots
-    decay_rate = 1.5e-3
-    n_episodes= 10000
-    n_trans_matrix = 1000
+    decay_rate = 1e-2
+    n_episodes= 3000
+    n_trans_matrix = 10000
     render=False
     rewards = list()
     durations = list()
     epsilons = list()
 
-    for i_episode in tqdm(range(n_episodes)):
+    # learn the transition matrix
+    #s = learn_trans_matrix(env, n_trans_matrix)
+    s = get_actual_trans_matrix(env)
 
-        # learn the transition matrix
-        while i_episode <= n_trans_matrix:
-            state = env.reset()
-            action=env.action_space.sample()
-            next_state, reward, done, info = env.step(action)
-            s[state, action, next_state] += 1
-            state = next_state
-            if done:
-                i_episode +=1
+    for i_episode in tqdm(range(n_episodes)):
+        state = env.reset()
         for t in range(100):
             if render:
                 env.render()
             #Pick Action
             action = choose_action(v, s, env, state, epsilon)
             next_state, reward, done, info = env.step(action)
-            # Update State Transition Matrix
-            s[state,action,next_state]+=1
-            # Update State-Action Value Table
-            #q = update_q_table(q, gamma, learning_rate)
+
+            # Update State Value Table
+            exp = (state, action, next_state, reward, done)
+            v = update_v_table(v, s, exp, gamma, learning_rate)
 
             state=next_state
             if done:
@@ -122,6 +170,9 @@ if __name__ == '__main__':
                 durations.append(t)
                 epsilon = min_epsilon + (max_epsilon - min_epsilon) * np.exp(-decay_rate* i_episode)
                 epsilons.append(epsilon)
+                policy = [0]*env.observation_space.n
+                for state in range(len(policy)):
+                    policy[state] = np.argmax(s[state]@v)
                  #learning_rate = max(0.05,1-(i_episode/n_episodes))#adjust_learning_rate(learning_rate, 10, rewards)
                 break
 
@@ -130,48 +181,3 @@ if __name__ == '__main__':
                pd.DataFrame(durations).rolling(100).mean()], axis=1).to_csv('exp_results.csv')
     pd.DataFrame(epsilons).plot()
 
-
-def update_q_table(self, obs, action, reward, next_obs, done, func):
-    '''
-
-
-    Parameters:
-    ---------------
-    obs      - (np.array), the state we transitioned from (s).
-    action   - (int) the action (a) taken at state=s.
-    reward   - (int) the reward (r) resulting from taking the specific action (a)
-               at state = s.
-    next_obs - (np.array) the next state (s') we transitioned into
-               after the taking the action at state=s.
-    done     - (bool) episode termination indicator. If True, target (above) is
-               only equal to the immediate reward (r) and there is no discounted
-               future reward
-    func     - (np.nanmax, np.nanmin) Should update with max if it is the agent's turn
-               and should take min if the opponent's turn
-    '''
-    if self.learning == 'off-policy':  # Q-Learning
-
-        if done:  # terminal state, just immediate reward
-            target = reward
-        else:  # within episode
-            target = reward + self.gamma * func(self.__get_state_vals(next_obs))
-        prediction = self.__get_state_vals(obs)[action]
-        updated_q_val = prediction + self.learning_rate * (target - prediction)
-        # update the q-value for the observed state,action pair
-        self.__set_q_val(obs, action, updated_q_val)
-
-    elif self.learning == 'on-policy':  # SARSA
-
-        if done:  # terminal state, just immediate reward
-            target = reward
-        else:  # within episode
-            on_policy_q = self.epsilon * np.nanmean(self.__get_state_vals(next_obs)) + \
-                          (1 - self.epsilon) * func(self.__get_state_vals(next_obs))
-            target = reward + self.gamma * on_policy_q
-        prediction = self.__get_state_vals(obs)[action]
-        updated_q_val = prediction + self.learning_rate * (target - prediction)
-
-        # update the q-value for the observed state,action pair
-        self.__set_q_val(obs, action, updated_q_val)
-    else:
-        raise ValueError('Learning method is not known.')

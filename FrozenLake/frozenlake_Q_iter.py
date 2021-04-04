@@ -107,7 +107,7 @@ def update_q_table_doesnt_work_well(q_table, experiences, gamma, learning_rate):
     return q_table
 
 
-def update_q_table(q, gamma, learning_rate):
+def update_q_table(q, exp, gamma, learning_rate):
     '''
         Implementation of the temporal difference learning update:
     Q(s,a) <-- Q(s,a) + alpha * [target - prediction].
@@ -128,7 +128,7 @@ def update_q_table(q, gamma, learning_rate):
     :param q: (np.array)
     :return: (dict) updated q (table)
     '''
-
+    state, action, next_state, reward, done = exp
     prediction = q[state, action]
     target = reward + gamma * np.max(q[next_state, :])
     q[state, action] = prediction + learning_rate * (target - prediction)
@@ -174,9 +174,9 @@ if __name__ == '__main__':
     epsilon= 1
     min_epsilon=0.01
     max_epsilon=1
-    gamma = 0.99 # for this task the closer this is to 1, the more reliable is the avg reward
+    gamma = 0.95 # for this task the closer this is to 1, the more reliable is the avg reward
     learning_rate = 0.8 # if this is >=1, the training overshoots
-    decay_rate = 1.5e-3
+    decay_rate = 7e-3
     n_episodes= 10000
     render=False
     rewards = list()
@@ -193,7 +193,8 @@ if __name__ == '__main__':
             action = choose_action(q, env, state, epsilon)
             next_state, reward, done, info = env.step(action)
             # Update State-Action Value Table
-            q = update_q_table(q, gamma, learning_rate)
+            exp = (state, action, next_state, reward, done)
+            q = update_q_table(q, exp, gamma, learning_rate)
 
             state=next_state
             if done:
@@ -213,49 +214,3 @@ if __name__ == '__main__':
     pd.concat([pd.DataFrame(rewards).rolling(100).mean(),
                pd.DataFrame(durations).rolling(100).mean()], axis=1).to_csv('exp_results.csv')
     pd.DataFrame(epsilons).plot()
-
-
-def update_q_table(self, obs, action, reward, next_obs, done, func):
-    '''
-
-
-    Parameters:
-    ---------------
-    obs      - (np.array), the state we transitioned from (s).
-    action   - (int) the action (a) taken at state=s.
-    reward   - (int) the reward (r) resulting from taking the specific action (a)
-               at state = s.
-    next_obs - (np.array) the next state (s') we transitioned into
-               after the taking the action at state=s.
-    done     - (bool) episode termination indicator. If True, target (above) is
-               only equal to the immediate reward (r) and there is no discounted
-               future reward
-    func     - (np.nanmax, np.nanmin) Should update with max if it is the agent's turn
-               and should take min if the opponent's turn
-    '''
-    if self.learning == 'off-policy':  # Q-Learning
-
-        if done:  # terminal state, just immediate reward
-            target = reward
-        else:  # within episode
-            target = reward + self.gamma * func(self.__get_state_vals(next_obs))
-        prediction = self.__get_state_vals(obs)[action]
-        updated_q_val = prediction + self.learning_rate * (target - prediction)
-        # update the q-value for the observed state,action pair
-        self.__set_q_val(obs, action, updated_q_val)
-
-    elif self.learning == 'on-policy':  # SARSA
-
-        if done:  # terminal state, just immediate reward
-            target = reward
-        else:  # within episode
-            on_policy_q = self.epsilon * np.nanmean(self.__get_state_vals(next_obs)) + \
-                          (1 - self.epsilon) * func(self.__get_state_vals(next_obs))
-            target = reward + self.gamma * on_policy_q
-        prediction = self.__get_state_vals(obs)[action]
-        updated_q_val = prediction + self.learning_rate * (target - prediction)
-
-        # update the q-value for the observed state,action pair
-        self.__set_q_val(obs, action, updated_q_val)
-    else:
-        raise ValueError('Learning method is not known.')
